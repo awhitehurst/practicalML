@@ -1,0 +1,129 @@
+---
+title: "Human Activity Recognition"
+author: "R. A. Whitehurst"
+date: "6/18/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Summary
+
+This report builds machine learning models to analyzes human activity data. After trying several different models, this report finds that the best predictor of human activity is the Random Forest algorithm, followed closely by the K-Nearest Neighbor algorithm. The Random Forest algorithm performs with 99% accuracy and the K-Nearest Neighbor algorithm performs with 97% accuracy. The K-Nearest Neighbor is substantially quicker to train.
+
+## Introduction
+
+This report details an effort to build and compare a number of machine learning algorithms trained on the Human Activity Recognition dataset described by W. Ugulino, D. Cardador, K. Vega, E. Velloso, R. Milidiu, and H. Fuks in "Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements" as published in the Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. 
+
+## Data
+
+After loading the data from a comma-separated-values formatted file (using "read.csv"), we see that there are a number of variables that contain mostly missing data. We will drop any variable in which the number of values is less than 50% of the total observations. Further, we notice that the variables whose names start with "kurtosis_", "skewness_", "max_", "min_" or "amplitude_" were brought in as factor variables, are sparsely populated with data, and include "divid-by-zero" errors. For these reasons, we will remove these variables from the data, as well. The first variable, labeled "X", is simply a count of each observation, and the user_name should not be part of the model that we develop (because we are interested in recognizing activity independent of the individual involved), so we will drop these columns from our dataset as well. We will convert the "cvtd_timestamp" into a POSIXct date/time, and we will also delete the two variables concerned with windows. We are left with a dataset consisting of 19622 observations of 54 variables (one of which is "classe", the value that we are trying to predict) which we will use as our training set. A similar set of data transformations will be performed on the testing set. Since the testing set does not contain an entry for "classe" against which we can validate our predictions, we will further partition our training set into partion A (which will be used for training), and partition B (which will be used for validation). For this reason, we will train against 18,643 observations, and then validate that training against 979 observations with known values for "classe". As a final step, we will run the predictive model against the "official" testing set of 20 observations.
+
+```{r data}
+require(dplyr)
+require(caret)
+require(rattle)
+require(kernlab)
+#
+# training set
+#
+hartrain <- read.csv("pml-training.csv")
+hartrain2 <- hartrain[,!sapply(hartrain,function(x) mean(is.na(x)))>0.5]
+hartrain2 <- hartrain2[,!grepl("^kurtosis_*",names(hartrain2))]
+hartrain2 <- hartrain2[,!grepl("^skewness_*",names(hartrain2))]
+hartrain2 <- hartrain2[,!grepl("^max_*",names(hartrain2))]
+hartrain2 <- hartrain2[,!grepl("^min_*",names(hartrain2))]
+hartrain2 <- hartrain2[,!grepl("^amplitude_*",names(hartrain2))]
+hartrain2 <- select(hartrain2, -1:-4)
+hartrain2$cvtd_timestamp <- as.POSIXct(hartrain2$cvtd_timestamp,format="%d/%m/%Y %H:%M",tz="GMT")
+hartrain2 <- hartrain2[,!grepl("*window$",names(hartrain2))]
+#
+# reserve 5 percent of the training data for validation
+#
+trainPart1 <- createDataPartition(hartrain2$classe,p=.95, list=FALSE)
+hartrain2a <- hartrain2[trainPart1,]
+hartrain2b <- hartrain2[-trainPart1,]
+# 
+# testing set
+#
+hartests <- read.csv("pml-testing.csv")
+hartests2 <- hartests[,!sapply(hartests,function(x) mean(is.na(x)))>0.5]
+hartests2 <- hartests2[,!grepl("^kurtosis_*",names(hartests2))]
+hartests2 <- hartests2[,!grepl("^skewness_*",names(hartests2))]
+hartests2 <- hartests2[,!grepl("^max_*",names(hartests2))]
+hartests2 <- hartests2[,!grepl("^min_*",names(hartests2))]
+hartests2 <- hartests2[,!grepl("^amplitude_*",names(hartests2))]
+hartests2 <- select(hartests2, -1:-4)
+hartests2$cvtd_timestamp <- as.POSIXct(hartests2$cvtd_timestamp,format="%d/%m/%Y %H:%M",tz="GMT")
+hartests2 <- hartests2[,!grepl("*window$",names(hartests2))]
+```
+
+## Models
+
+We begin by setting the seed of the pseudo-random number generator to 0, so that the results are repeatable.
+
+```{r models}
+set.seed(0)
+```
+
+The first model we will train is a simple decision tree model, called "rpart". This model trains very rapidly, even with the Principal Component Analysis as a preprocessing step. The results are rather disappointing, achieving only a 37% accuracy, as can be seen as the result of the confusion matrix.
+
+```{r classification tree}
+if(!exists("modelCT")){
+  modelCT <- train(classe~., hartrain2a, method="rpart", preProcess=c("pca"), trControl=trainControl(method="cv"))
+}
+predCT <- predict(modelCT, newdata=hartrain2b)
+confusionMatrix(hartrain2b$classe, predCT)
+```
+
+```{r}
+fancyRpartPlot(modelCT$finalModel)
+```
+
+The next model we will train utilizes the Random Forest technique, which is an extention of the decision tree approach in which multiple decision trees are combined into a combined model. While the simple decision tree created first trained almost instantaneously, the Random Forest model takes substantially longer to train; however, the accuracy of this approach is almost perfect (99.69%).
+
+
+```{r rf}
+if(!exists("modelRF")){
+  modelRF <- train(classe~., hartrain2a, method="rf", trControl=trainControl(method="cv"))
+}
+predRF <- predict(modelRF, newdata=hartrain2b)
+confusionMatrix(hartrain2b$classe, predRF)
+```
+
+```{r}
+plot(modelRF$finalModel)
+```
+
+The next model we will train is the K-Nearest Neighbor model. This model also trains relatively quickly, and produces results that are almost as good as the Random Forest model, at an accuracy of 97%.
+
+```{r knn3}
+if(!exists("modelKNN")){
+  modelKNN <- train(classe~., hartrain2a, method="knn", preProcess=c("pca"), trControl=trainControl(method="cv"))
+}
+predKNN <- predict(modelKNN, newdata=hartrain2b)
+confusionMatrix(hartrain2b$classe, predKNN)
+```
+
+The final model we will train will be the G-Boost model, which, like Random Forest, is an ensemble model comprised of a set of weak decision trees. One of the longer training times, this model achieved a respectable 81% accuracy on the testing data.
+
+```{r gboost}
+if(!exists("modelGB")){
+  modelGB <- train(classe~., hartrain2a, method="gbm", preProcess=c("pca"), trControl=trainControl(method="cv"))
+}
+predGB <- predict(modelGB, newdata=hartrain2b)
+confusionMatrix(hartrain2b$classe, predGB)
+
+```
+
+## Conclusion
+
+We have tried a number of machine learning algorithms on the Human Activity Recognition data set. Of these, the Random Forest approach achieved the greatest accuracy at 99.6%, followed closely by the K-Nearest Neighbor algorithm at 97.5%.
+We will use the Random Forest model to generate the final prediction on the reserved testing set of 20 observations, resulting in the following prediction.
+
+```{r}
+finalPrediction <- predict(modelRF,newdata=hartests2)
+finalPrediction
+```
